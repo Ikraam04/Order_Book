@@ -8,6 +8,14 @@
 #include <unordered_map>
 #include <vector>
 
+/*
+ * OrderBook implementation
+ * This class manages the order book, processes incoming orders, matches them, and maintains the state of the book
+ * It uses an OrderPool to efficiently manage memory for Order objects
+ * The order book maintains bids and asks in sorted maps for efficient matching
+ */
+
+
 struct ProcessOrderResult {
     // ths struct holds the result of processing an order (trades executed and new order id if added to book)
     std::vector<Trade> trades;

@@ -99,6 +99,6 @@ void general_test(OrderBook& order_book) {
 int main() {
     OrderBook order_book;
     //general_test(order_book);
-    run_performance_benchmark(order_book);
+    //run_performance_benchmark(order_book);
     return 0;
 }

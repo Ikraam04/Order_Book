@@ -2,8 +2,6 @@
 // Created by taco on 06/09/2025.
 //
 
-#ifndef ORDER_BOOK_ORDERPOOL_H
-#define ORDER_BOOK_ORDERPOOL_H
 
 #pragma once
 
@@ -11,25 +9,31 @@
 #include <vector>
 #include <memory>
 
+/*
+ * OrderPool implementation
+ * This class manages a pool of pre-allocated Order objects to minimize dynamic memory allocations.
+ * It provides methods to get an available Order object and to return it back to the pool.
+ * When the pool is exhausted, it throws an exception.
+ */
+
 class OrderPool {
 public:
-    // Constructor: Pre-allocates a fixed number of Order objects.
+    // constructor pre-allocates a fixed number of Order objects
     explicit OrderPool(size_t size);
 
-    // Gets an available Order object from the pool.
-    // Throws std::runtime_error if the pool is exhausted.
+    // returns a pointer to an available Order object from the pool
+    // throws std::runtime_error if the pool is exhausted
     Order* get_order();
 
-    // Returns an Order object to the pool so it can be reused.
+    // returns an Order object back to the pool for reuse
     void return_order(Order* order);
 
 private:
-    // This vector owns all the Order objects for their entire lifetime.
+    // this is the actual storage for the pool of Order objects
     std::vector<Order> pool_;
 
-    // This stores pointers to the currently available objects in the pool.
+    // this is a stack of pointers to available Order objects in the pool
     std::vector<Order*> free_list_;
 };
 
 
-#endif //ORDER_BOOK_ORDERPOOL_H

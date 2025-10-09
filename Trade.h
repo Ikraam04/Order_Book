@@ -1,11 +1,16 @@
 
 
-#ifndef ORDER_BOOK_TRADE_H
-#define ORDER_BOOK_TRADE_H
 #pragma once
 
 #include <cstdint>
 #include <chrono>
+/*
+ * Trade implementation
+ * This struct represents a trade that has occurred between a buy and sell order
+ * It includes the IDs of the orders involved, the price and quantity traded, and a timestamp
+ * no need for a cpp file here - just the attributes
+ */
+
 
 //same as order, no need for a class here
 struct Trade {
@@ -16,4 +21,4 @@ struct Trade {
     std::chrono::high_resolution_clock::time_point timestamp; //when trade occurred
 };
 
-#endif
+

@@ -3,6 +3,13 @@
 #include <cstdint>
 #include <chrono>
 
+/*
+ * Order implementation
+ * This class represents an order in the order book with its attributes and basic functionality
+ * It includes constructors and a method to check if the order is filled
+ */
+
+
 // enums to represent the side and type of  order.
 enum class OrderSide : uint8_t {
     Buy = 0,

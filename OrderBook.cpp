@@ -1,6 +1,13 @@
 #include "OrderBook.h"
 #include <algorithm>
 #include <iostream>
+/*
+ * OrderBook implementation
+ * This class manages the order book, processes incoming orders, matches them, and maintains the state of the book
+ * It uses an OrderPool to efficiently manage memory for Order objects
+ * The order book maintains bids and asks in sorted maps for efficient matching
+ */
+
 
 //constructor
 OrderBook::OrderBook() : order_pool_(2'500'000) { // Increased pool size as needed
@@ -142,7 +149,7 @@ bool OrderBook::cancel_order(uint64_t order_id) {
         }
     }
 
-    // Return the cancelled order to the pool instead of calling 'delete'
+    // return the order to the pool
     order_pool_.return_order(order_to_cancel);
     return true;
 }

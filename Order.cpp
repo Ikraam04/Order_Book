@@ -1,5 +1,11 @@
 #include "Order.h"
 
+/*
+ * Order implementation
+ * This class represents an order in the order book with its attributes and basic functionality
+ * It includes constructors and a method to check if the order is filled
+ */
+
 // default constructor
 Order::Order()
         : order_id(0),
