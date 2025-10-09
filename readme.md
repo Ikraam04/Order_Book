@@ -1,10 +1,12 @@
 # Low Latency Order Book in C++
 This project implements a simulated low latency order book in C++. It does this by using data structures and algorithms optimized for fast access and updates, such as hash maps and queues.
+also uses a pool allocator to reduce memory allocation overhead.
 
 *Really this project is to demonstrate that I can use C++ for low latency applications and object oriented programming. - as I don't really have a project that shows that right now.*
 ## Features
 - Order book management with bid and ask sides
 - Fast order matching and execution
+- Order pool for efficient memory management
 - Support for limit and market orders (more to be added)
 - right now processes about 3 million orders per second (high-end PC)
 
