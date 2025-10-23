@@ -32,6 +32,7 @@ public:
     ProcessOrderResult process_order(Order new_order);
 
     //other methods
+    const std::vector<Trade>& get_trade_history() const;
     bool cancel_order(uint64_t order_id);
     double get_best_bid() const;
     double get_best_ask() const;
@@ -39,6 +40,8 @@ public:
 
 private:
     // internal state
+
+    std::vector<Trade> executed_trades_;
 
     uint64_t next_order_id_ = 1; //incremental order ID generator
 

@@ -64,8 +64,17 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
             while (!orders_at_price.empty() && incoming_order.quantity > 0) {
                 Order* existing_sell_order = orders_at_price.front(); // FIFO matching
                 uint64_t trade_quantity = std::min(incoming_order.quantity, existing_sell_order->quantity);
+                Trade new_trade = {
+                    incoming_order.order_id,
+                    existing_sell_order->order_id,
+                    it->first,
+                    trade_quantity,
+                    std::chrono::high_resolution_clock::now()
+                };
                 // Record the trade
-                trades.push_back({incoming_order.order_id, existing_sell_order->order_id, it->first, trade_quantity, std::chrono::high_resolution_clock::now()});
+                trades.push_back(new_trade);
+
+                executed_trades_.push_back(new_trade);
 
                 incoming_order.quantity -= trade_quantity;
                 existing_sell_order->quantity -= trade_quantity;
@@ -164,6 +173,10 @@ double OrderBook::get_best_ask() const {
     return asks_.begin()->first;
 }
 
+const std::vector<Trade>& OrderBook::get_trade_history() const {
+    return executed_trades_;
+}
+
 //make a pretty output of the order book
 std::ostream& operator<<(std::ostream& os, const OrderBook& book) {
     os << "Order Book State:\n";
@@ -188,3 +201,4 @@ std::ostream& operator<<(std::ostream& os, const OrderBook& book) {
 
     return os;
 }
+

@@ -98,7 +98,9 @@ void general_test(OrderBook& order_book) {
 
 int main() {
     OrderBook order_book;
-    //general_test(order_book);
+    general_test(order_book);
+    std::vector<Trade> trades = order_book.get_trade_history();
+    std::cout << "Total trades executed: " << trades.size() << std::endl;
     //run_performance_benchmark(order_book);
     return 0;
 }
