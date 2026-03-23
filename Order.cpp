@@ -18,7 +18,9 @@ Order::Order()
 
 // parameterized constructor
 Order::Order(OrderSide s, OrderType t, double p, uint64_t q)
-        : side(s),
+        : order_id(0),
+          client_order_id(0),
+          side(s),
           type(t),
           price(p),
           quantity(q),

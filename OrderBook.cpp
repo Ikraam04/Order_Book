@@ -105,7 +105,9 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
                 Order* existing_buy_order = orders_at_price.front();
                 uint64_t trade_quantity = std::min(incoming_order.quantity, existing_buy_order->quantity);
                 // record the trade
-                trades.push_back({existing_buy_order->order_id, incoming_order.order_id, it->first, trade_quantity, std::chrono::high_resolution_clock::now()});
+                Trade new_trade = {existing_buy_order->order_id, incoming_order.order_id, it->first, trade_quantity, std::chrono::high_resolution_clock::now()};
+                trades.push_back(new_trade);
+                executed_trades_.push_back(new_trade);
 
                 incoming_order.quantity -= trade_quantity;
                 existing_buy_order->quantity -= trade_quantity;
