@@ -158,6 +158,7 @@ bool OrderBook::cancel_order(uint64_t order_id) {
         }
     }
 
+
     // return the order to the pool
     order_pool_.return_order(order_to_cancel);
     return true;

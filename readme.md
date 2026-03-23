@@ -13,12 +13,10 @@ also uses a pool allocator to reduce memory allocation overhead.
 ## to do
 ### in terms of features
 - Add support for different order types (stop loss, IoC...)
-- Add a server to handle incoming orders via network
 - add  user class to manage multiple users and their portfolios
-- save order to DB or file
 - GUI???
 
 ### in terms of performance (the better stuff)
-- Maybe use cache friendly data structures like flat_map 
+- Maybe use more cache friendly data structures like flat_map 
 - multi-thread the whole thing (when network / users are added)
 
