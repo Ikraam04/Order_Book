@@ -6,19 +6,28 @@
 #include "Order.h"
 #include "OrderBook.h"
 
-// generates a batch of random orders upfront so the benchmark doesn't include generation time
+// Pre-generate a pool of random orders used by both benchmarks.
+// Mix: 40% Limit, 20% Market, 20% IoC, 20% FOK
+// Prices use a tighter spread (mid=100, ±5) so orders cross more often — a more realistic workload.
 static std::vector<Order> generate_orders(int count, std::mt19937& gen) {
-    std::uniform_int_distribution<> side_dist(0, 1);
-    std::uniform_int_distribution<> type_dist(0, 1);
-    std::uniform_real_distribution<> price_dist(9000.0, 11000.0);
+    std::uniform_int_distribution<>    side_dist(0, 1);
+    std::uniform_int_distribution<>    type_dist(0, 4);   // 0=Limit,1=Market,2=IoC,3-4=FOK (weighted)
+    std::uniform_real_distribution<>   price_dist(9500.0, 10500.0); // ±5% of mid=100
     std::uniform_int_distribution<uint64_t> qty_dist(1, 100);
 
     std::vector<Order> orders;
     orders.reserve(count);
     for (int i = 0; i < count; ++i) {
         OrderSide side = (side_dist(gen) == 0) ? OrderSide::Buy : OrderSide::Sell;
-        OrderType type = (type_dist(gen) == 0) ? OrderType::Limit : OrderType::Market;
-        double price = (type == OrderType::Limit) ? price_dist(gen) / 100.0 : 0.0;
+        int t = type_dist(gen);
+        OrderType type;
+        if      (t <= 1) type = OrderType::Limit;   // 0,1 → 40%
+        else if (t == 2) type = OrderType::Market;  // 2   → 20%
+        else if (t == 3) type = OrderType::IoC;     // 3   → 20%
+        else             type = OrderType::FOK;     // 4   → 20%
+
+        // Market orders have no price; all others use a limit price
+        double price = (type == OrderType::Market) ? 0.0 : price_dist(gen) / 100.0;
         orders.emplace_back(side, type, price, qty_dist(gen));
     }
     return orders;
@@ -44,6 +53,8 @@ void run_performance_benchmark() {
 
         auto start = std::chrono::high_resolution_clock::now();
 
+        uint64_t fok_killed = 0, ioc_partial = 0;
+
         for (int i = 0; i < NUM_OPS; ++i) {
             if (!active_ids.empty() && uniform01(gen) < CANCEL_RATIO) {
                 // pick a random live order and swap-remove it so this stays O(1)
@@ -60,6 +71,8 @@ void run_performance_benchmark() {
                 auto result = book.process_order(orders[order_idx++ % NUM_OPS]);
                 if (result.new_order_id != 0)
                     active_ids.push_back(result.new_order_id);
+                if (result.status == OrderStatus::Killed)      ++fok_killed;
+                if (result.status == OrderStatus::PartialFill) ++ioc_partial;
                 ++adds;
             }
         }
@@ -67,13 +80,15 @@ void run_performance_benchmark() {
         auto end = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(end - start).count();
 
-        std::cout << "\nThroughput benchmark (add + cancel):" << std::endl;
-        std::cout << "  Orders added: " << adds << std::endl;
-        std::cout << "  Cancels (hit): " << cancels_ok << std::endl;
-        std::cout << "  Cancels (already filled): " << cancels_miss << std::endl;
-        std::cout << "  Total ops: " << NUM_OPS << std::endl;
-        std::cout << "  Time: " << elapsed << "s" << std::endl;
-        std::cout << "  Throughput: " << (int)(NUM_OPS / elapsed) << " ops/sec" << std::endl;
+        std::cout << "\n=== Throughput Benchmark (add + cancel) ===\n";
+        std::cout << "  Orders submitted:         " << adds          << "\n";
+        std::cout << "  FOK killed:               " << fok_killed    << "\n";
+        std::cout << "  IoC partial fills:        " << ioc_partial   << "\n";
+        std::cout << "  Cancels (successful):     " << cancels_ok    << "\n";
+        std::cout << "  Cancels (already filled): " << cancels_miss  << "\n";
+        std::cout << "  Total operations:         " << NUM_OPS       << "\n";
+        std::cout << "  Time:                     " << elapsed        << " s\n";
+        std::cout << "  Throughput:               " << static_cast<long long>(NUM_OPS / elapsed) << " ops/sec\n";
     }
 
     // latency benchmark - times each individual add to get percentiles
@@ -108,56 +123,78 @@ void run_performance_benchmark() {
 }
 
 
+static const char* status_str(OrderStatus s) {
+    switch (s) {
+        case OrderStatus::Resting:     return "Resting";
+        case OrderStatus::Filled:      return "Filled";
+        case OrderStatus::PartialFill: return "PartialFill (IoC)";
+        case OrderStatus::Killed:      return "Killed (FOK)";
+    }
+    return "Unknown";
+}
+
+static void print_result(const char* label, const ProcessOrderResult& r) {
+    std::cout << label << ": status=" << status_str(r.status)
+              << ", resting_id=" << r.new_order_id
+              << ", trades=" << r.trades.size() << "\n";
+    for (const auto& t : r.trades) {
+        std::cout << "    Trade: buyer=" << t.buyer_order_id
+                  << " seller=" << t.seller_order_id
+                  << " price=" << t.price
+                  << " qty=" << t.quantity << "\n";
+    }
+}
+
 void general_test(OrderBook& order_book) {
-    // Basic functionality test
+    std::cout << "=== Basic Limit/Market tests ===\n";
 
-    //create some orders
-    Order order1(OrderSide::Buy, OrderType::Limit, 100.0, 10);
-    Order order2(OrderSide::Sell, OrderType::Limit, 101.0, 5);
-    Order order3(OrderSide::Sell, OrderType::Limit, 99.0, 15);
-    Order order4(OrderSide::Buy, OrderType::Limit, 105, 100);
+    // Seed book: buy@100 qty10, sell@101 qty5
+    auto r1 = order_book.process_order({OrderSide::Buy,  OrderType::Limit, 100.0, 10});
+    auto r2 = order_book.process_order({OrderSide::Sell, OrderType::Limit, 101.0,  5});
+    print_result("Limit Buy  @100 qty10 (expect Resting)", r1);
+    print_result("Limit Sell @101 qty5  (expect Resting)", r2);
 
-    //process orders
-    auto result1 = order_book.process_order(order1);
-    std::cout << "Processed Order 1: New Order ID = " << result1.new_order_id << std::endl;
+    // Sell@99 crosses the bid@100 — should match
+    auto r3 = order_book.process_order({OrderSide::Sell, OrderType::Limit, 99.0, 15});
+    print_result("Limit Sell @99  qty15 (expect partial fill + Resting)", r3);
 
+    // Aggressive buy sweeps remaining book
+    auto r4 = order_book.process_order({OrderSide::Buy, OrderType::Limit, 105.0, 100});
+    print_result("Limit Buy  @105 qty100 (expect trades + Resting remainder)", r4);
 
-    auto result2 = order_book.process_order(order2);
-    std::cout << "Processed Order 2: New Order ID = " << result2.new_order_id << std::endl;
+    std::cout << "\n=== IoC tests ===\n";
 
-    auto result3 = order_book.process_order(order3);
-    std::cout << "Processed Order 3: New Order ID = " << result3.new_order_id << std::endl;
+    // Setup: sell@100 qty20
+    order_book.process_order({OrderSide::Sell, OrderType::Limit, 100.0, 20});
 
-    //print trades
-    for (const auto &trade: result3.trades) {
-        std::cout << "  -> Trade: BuyerID=" << trade.buyer_order_id
-                  << ", SellerID=" << trade.seller_order_id
-                  << ", Price=" << trade.price
-                  << ", Qty=" << trade.quantity << std::endl;
-    }
+    // IoC buy below best ask — no match, entire order cancelled (not resting)
+    auto ioc1 = order_book.process_order({OrderSide::Buy, OrderType::IoC, 99.0, 10});
+    print_result("IoC Buy @99 qty10 against ask@100  (expect Killed/no trades)", ioc1);
 
+    // IoC buy at ask — partial fill possible (only 20 available, want 30), remainder cancelled
+    auto ioc2 = order_book.process_order({OrderSide::Buy, OrderType::IoC, 100.0, 30});
+    print_result("IoC Buy @100 qty30 vs ask@100 qty20 (expect PartialFill, 1 trade)", ioc2);
 
-    // process a market order that should match with existing orders
-    auto result4 = order_book.process_order(order4);
-    std::cout << "Processed Order 4: New Order ID = " << result4.new_order_id << std::endl;
-;
-    //print trades
-    for (const auto &trade: result4.trades) {
-        std::cout << "  -> Trade: BuyerID=" << trade.buyer_order_id
-                  << ", SellerID=" << trade.seller_order_id
-                  << ", Price=" << trade.price
-                  << ", Qty=" << trade.quantity << std::endl;
-    }
+    std::cout << "\n=== FOK tests ===\n";
 
+    // Setup: sell@100 qty5
+    order_book.process_order({OrderSide::Sell, OrderType::Limit, 100.0, 5});
 
-    std::cout << "\nFinal Order Book State:" << std::endl;
-    std::cout << order_book << std::endl;
+    // FOK buy qty20 — only 5 available, cannot fill entirely → killed
+    auto fok1 = order_book.process_order({OrderSide::Buy, OrderType::FOK, 100.0, 20});
+    print_result("FOK Buy @100 qty20 vs ask@100 qty5  (expect Killed, 0 trades)", fok1);
+
+    // FOK buy qty5 — exactly 5 available → fully filled
+    auto fok2 = order_book.process_order({OrderSide::Buy, OrderType::FOK, 100.0, 5});
+    print_result("FOK Buy @100 qty5  vs ask@100 qty5  (expect Filled, 1 trade)", fok2);
+
+    std::cout << "\nFinal Order Book State:\n" << order_book << "\n";
 }
 
 int main() {
     OrderBook order_book;
     general_test(order_book);
-    std::cout << "Total trades executed: " << order_book.get_trade_history().size() << std::endl;
+    std::cout << "Total trades recorded in history: " << order_book.get_trade_history().size() << "\n\n";
     run_performance_benchmark();
     return 0;
 }

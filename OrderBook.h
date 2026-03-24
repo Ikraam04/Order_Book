@@ -16,10 +16,18 @@
  */
 
 
+// Describes what ultimately happened to the incoming order
+enum class OrderStatus : uint8_t {
+    Resting,     // unfilled (or partially filled) limit order added to the book
+    Filled,      // fully matched immediately (any order type)
+    PartialFill, // IoC: partially matched; unfilled remainder was cancelled
+    Killed,      // FOK: could not be completely filled; entire order cancelled, no trades executed
+};
+
 struct ProcessOrderResult {
-    // ths struct holds the result of processing an order (trades executed and new order id if added to book)
     std::vector<Trade> trades;
-    uint64_t new_order_id = 0;
+    uint64_t           new_order_id = 0; // non-zero only when the order is resting in the book
+    OrderStatus        status       = OrderStatus::Filled;
 };
 
 
@@ -58,4 +66,8 @@ private:
     friend std::ostream& operator<<(std::ostream& os, const OrderBook& book);
 
     std::vector<Trade> match_and_fill(Order& new_order);
+
+    // Dry-run for FOK: checks whether the full quantity of `order` can be filled
+    // at its limit price without modifying the book.
+    bool can_fill_completely(const Order& order) const;
 };
