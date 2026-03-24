@@ -3,11 +3,10 @@
 #include <chrono>
 #include <random>
 #include <algorithm>
-#include <numeric>
 #include "Order.h"
 #include "OrderBook.h"
 
-// Pre-generate a pool of random orders used by both benchmarks
+// generates a batch of random orders upfront so the benchmark doesn't include generation time
 static std::vector<Order> generate_orders(int count, std::mt19937& gen) {
     std::uniform_int_distribution<> side_dist(0, 1);
     std::uniform_int_distribution<> type_dist(0, 1);
@@ -26,16 +25,14 @@ static std::vector<Order> generate_orders(int count, std::mt19937& gen) {
 }
 
 void run_performance_benchmark() {
-    const int NUM_OPS        = 2'500'000;
-    const double CANCEL_RATIO = 0.20; // ~20% of operations are cancellations
+    const int NUM_OPS = 2'500'000;
+    const double CANCEL_RATIO = 0.20; // roughly 1 in 5 ops will be a cancel
 
     std::mt19937 gen(42);
     std::cout << "Pre-generating " << NUM_OPS << " orders..." << std::endl;
     auto orders = generate_orders(NUM_OPS, gen);
 
-    // ---------------------------------------------------------------
-    // 1. Throughput benchmark: mixed add + cancel workload
-    // ---------------------------------------------------------------
+    // throughput benchmark - mix of adds and cancels
     {
         OrderBook book;
         std::vector<uint64_t> active_ids;
@@ -49,14 +46,16 @@ void run_performance_benchmark() {
 
         for (int i = 0; i < NUM_OPS; ++i) {
             if (!active_ids.empty() && uniform01(gen) < CANCEL_RATIO) {
-                // pick a random active order — swap-remove keeps this O(1)
-                auto idx = static_cast<size_t>(uniform01(gen) * active_ids.size());
+                // pick a random live order and swap-remove it so this stays O(1)
+                int idx = (int)(uniform01(gen) * active_ids.size());
                 uint64_t id = active_ids[idx];
                 active_ids[idx] = active_ids.back();
                 active_ids.pop_back();
 
-                if (book.cancel_order(id)) ++cancels_ok;
-                else                       ++cancels_miss; // already matched/filled
+                if (book.cancel_order(id))
+                    ++cancels_ok;
+                else
+                    ++cancels_miss; // order was already matched and filled
             } else {
                 auto result = book.process_order(orders[order_idx++ % NUM_OPS]);
                 if (result.new_order_id != 0)
@@ -68,19 +67,17 @@ void run_performance_benchmark() {
         auto end = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(end - start).count();
 
-        std::cout << "\n=== Throughput Benchmark (add + cancel) ===\n";
-        std::cout << "  Orders added:           " << adds        << "\n";
-        std::cout << "  Cancels (successful):   " << cancels_ok  << "\n";
-        std::cout << "  Cancels (already filled): " << cancels_miss << "\n";
-        std::cout << "  Total operations:       " << NUM_OPS     << "\n";
-        std::cout << "  Time:                   " << elapsed      << " s\n";
-        std::cout << "  Throughput:             " << static_cast<long long>(NUM_OPS / elapsed) << " ops/sec\n";
+        std::cout << "\nThroughput benchmark (add + cancel):" << std::endl;
+        std::cout << "  Orders added: " << adds << std::endl;
+        std::cout << "  Cancels (hit): " << cancels_ok << std::endl;
+        std::cout << "  Cancels (already filled): " << cancels_miss << std::endl;
+        std::cout << "  Total ops: " << NUM_OPS << std::endl;
+        std::cout << "  Time: " << elapsed << "s" << std::endl;
+        std::cout << "  Throughput: " << (int)(NUM_OPS / elapsed) << " ops/sec" << std::endl;
     }
 
-    // ---------------------------------------------------------------
-    // 2. Latency benchmark: per-operation timing, add-only
-    //    Uses a smaller sample so the timing overhead stays negligible.
-    // ---------------------------------------------------------------
+    // latency benchmark - times each individual add to get percentiles
+    // uses a smaller sample because per-op timing has its own overhead
     {
         const int LATENCY_OPS = 200'000;
         OrderBook book;
@@ -91,23 +88,22 @@ void run_performance_benchmark() {
             auto t0 = std::chrono::high_resolution_clock::now();
             book.process_order(orders[i % NUM_OPS]);
             auto t1 = std::chrono::high_resolution_clock::now();
-            latencies_ns.push_back(
-                std::chrono::duration<double, std::nano>(t1 - t0).count());
+            latencies_ns.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count());
         }
 
         std::sort(latencies_ns.begin(), latencies_ns.end());
-        double mean = std::accumulate(latencies_ns.begin(), latencies_ns.end(), 0.0) / LATENCY_OPS;
 
-        auto pct = [&](double p) {
-            return latencies_ns[static_cast<size_t>(p / 100.0 * LATENCY_OPS)];
-        };
+        double total = 0.0;
+        for (double ns : latencies_ns)
+            total += ns;
+        double mean = total / LATENCY_OPS;
 
-        std::cout << "\n=== Latency Benchmark (add-only, " << LATENCY_OPS << " ops) ===\n";
-        std::cout << "  mean: " << mean          << " ns\n";
-        std::cout << "  p50:  " << pct(50)       << " ns\n";
-        std::cout << "  p99:  " << pct(99)       << " ns\n";
-        std::cout << "  p99.9:" << pct(99.9)     << " ns\n";
-        std::cout << "  max:  " << latencies_ns.back() << " ns\n";
+        std::cout << "\nLatency benchmark (add-only, " << LATENCY_OPS << " ops):" << std::endl;
+        std::cout << "  mean: " << mean << " ns" << std::endl;
+        std::cout << "  p50:  " << latencies_ns[LATENCY_OPS * 50 / 100] << " ns" << std::endl;
+        std::cout << "  p99:  " << latencies_ns[LATENCY_OPS * 99 / 100] << " ns" << std::endl;
+        std::cout << "  p99.9: " << latencies_ns[(int)(LATENCY_OPS * 0.999)] << " ns" << std::endl;
+        std::cout << "  max:  " << latencies_ns.back() << " ns" << std::endl;
     }
 }
 
