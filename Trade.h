@@ -16,7 +16,7 @@
 struct Trade {
     uint64_t buyer_order_id;
     uint64_t seller_order_id;
-    double price;      // price at which trade occurred
+    int32_t price;     // price in ticks at which trade occurred (1 tick = $0.01)
     uint64_t quantity; // quantity traded
     std::chrono::high_resolution_clock::time_point timestamp; //when trade occurred
 };

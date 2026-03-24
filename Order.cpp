@@ -11,13 +11,13 @@ Order::Order()
         : order_id(0),
           side(OrderSide::Buy),
           type(OrderType::Limit),
-          price(0.0),
+          price(0),
           quantity(0),
           timestamp(std::chrono::high_resolution_clock::now())
 {}
 
 // parameterized constructor
-Order::Order(OrderSide s, OrderType t, double p, uint64_t q)
+Order::Order(OrderSide s, OrderType t, int32_t p, uint64_t q)
         : order_id(0),
           client_order_id(0),
           side(s),
