@@ -18,35 +18,46 @@ OrderBook::~OrderBook() {
 }
 
 ProcessOrderResult OrderBook::process_order(Order new_order_data) {
-    ProcessOrderResult result; // Create the result object
+    ProcessOrderResult result;
 
     Order* incoming_order = order_pool_.get_order();
-
     incoming_order->order_id = next_order_id_++;
-    incoming_order->side = new_order_data.side;
-    incoming_order->type = new_order_data.type;
-    incoming_order->price = new_order_data.price;
+    incoming_order->side     = new_order_data.side;
+    incoming_order->type     = new_order_data.type;
+    incoming_order->price    = new_order_data.price;
     incoming_order->quantity = new_order_data.quantity;
     incoming_order->timestamp = std::chrono::high_resolution_clock::now();
 
-    // match and fill the incoming order
+    // FOK: dry-run check — if we cannot fill the entire quantity right now, kill the order
+    if (incoming_order->type == OrderType::FOK && !can_fill_completely(*incoming_order)) {
+        order_pool_.return_order(incoming_order);
+        result.status = OrderStatus::Killed;
+        return result;
+    }
+
     result.trades = match_and_fill(*incoming_order);
-    // if the order is not fully filled and is a limit order, add it to the book
+
     if (!incoming_order->is_filled() && incoming_order->type == OrderType::Limit) {
+        // Unfilled limit order — add it to the book
         if (incoming_order->side == OrderSide::Buy) {
             bids_[incoming_order->price].push_back(incoming_order);
-        } else { // sell Side
+        } else {
             asks_[incoming_order->price].push_back(incoming_order);
         }
         orders_by_id_[incoming_order->order_id] = incoming_order;
-
-        // If the order was added to the book, set its ID in the result
         result.new_order_id = incoming_order->order_id;
+        result.status = result.trades.empty() ? OrderStatus::Resting : OrderStatus::Resting;
     } else {
+        // Market / IoC / FOK (filled) — never rest; return memory to pool
+        if (!incoming_order->is_filled() && incoming_order->type == OrderType::IoC) {
+            result.status = OrderStatus::PartialFill; // IoC: some filled, rest cancelled
+        } else {
+            result.status = OrderStatus::Filled;
+        }
         order_pool_.return_order(incoming_order);
     }
 
-    return result; // return result
+    return result;
 }
 
 std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
@@ -127,6 +138,33 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
         }
     }
     return trades;
+}
+
+bool OrderBook::can_fill_completely(const Order& order) const {
+    // Walks the opposite side of the book and checks whether enough quantity is available
+    // at the order's limit price (or better) to satisfy the full order — no book modifications.
+    uint64_t available = 0;
+
+    if (order.side == OrderSide::Buy) {
+        // asks_ is sorted ascending: iterate while ask_price <= order.price
+        for (const auto& [price, orders_at_price] : asks_) {
+            if (price > order.price) break;
+            for (const Order* o : orders_at_price) {
+                available += o->quantity;
+                if (available >= order.quantity) return true;
+            }
+        }
+    } else {
+        // bids_ is sorted descending: iterate while bid_price >= order.price
+        for (const auto& [price, orders_at_price] : bids_) {
+            if (price < order.price) break;
+            for (const Order* o : orders_at_price) {
+                available += o->quantity;
+                if (available >= order.quantity) return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool OrderBook::cancel_order(uint64_t order_id) {

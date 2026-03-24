@@ -17,8 +17,10 @@ enum class OrderSide : uint8_t {
 };
 
 enum class OrderType : uint8_t {
-    Limit = 0,
-    Market = 1
+    Limit  = 0, // rests in the book if not immediately matched
+    Market = 1, // matches at any price; never rests
+    IoC    = 2, // Immediate-or-Cancel: matches at limit price or better, cancels any unfilled remainder
+    FOK    = 3  // Fill-or-Kill: must be fully filled immediately at limit price or better, or the whole order is cancelled
 };
 //struct because why not? no need for a class here
 struct Order {
