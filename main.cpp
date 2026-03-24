@@ -3,16 +3,43 @@
 #include <chrono>
 #include <random>
 #include <algorithm>
+#include <numeric>
+#include <cmath>
 #include "Order.h"
 #include "OrderBook.h"
 
-// Pre-generate a pool of random orders used by both benchmarks.
+// Displays a tick price as a dollar amount alongside the raw tick value
+static std::string fmt_price(int32_t ticks) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "$%d.%02d (%d)", ticks / 100, ticks % 100, ticks);
+    return buf;
+}
+
+// Generates a mid-price path using a symmetric random walk (±1 tick per step).
+// Clamped to [9000, 11000] so the mid never drifts more than $10 from the $100 start.
+// This ensures the benchmark exercises the matching engine continuously as the mid drifts
+// into resting orders, rather than just benchmarking book insertion.
+static std::vector<int32_t> generate_mid_path(int count, std::mt19937& gen) {
+    std::vector<int32_t> path;
+    path.reserve(count);
+    int32_t mid = 10000; // start at $100.00
+    std::uniform_int_distribution<int32_t> step_dist(-1, 1); // -1, 0, or +1 tick each step
+    for (int i = 0; i < count; ++i) {
+        path.push_back(mid);
+        mid = std::clamp(mid + step_dist(gen), int32_t{9000}, int32_t{11000});
+    }
+    return path;
+}
+
+// Pre-generates orders whose prices are drawn from N(mid, σ=5 ticks).
+// σ=5 means ~68% of orders land within 5 ticks of mid — orders cross the spread often,
+// so the benchmark exercises both the matching and the insertion paths.
 // Mix: 40% Limit, 20% Market, 20% IoC, 20% FOK
-// Prices use a tighter spread (mid=100, ±5) so orders cross more often — a more realistic workload.
-static std::vector<Order> generate_orders(int count, std::mt19937& gen) {
-    std::uniform_int_distribution<>    side_dist(0, 1);
-    std::uniform_int_distribution<>    type_dist(0, 4);   // 0=Limit,1=Market,2=IoC,3-4=FOK (weighted)
-    std::uniform_real_distribution<>   price_dist(9500.0, 10500.0); // ±5% of mid=100
+static std::vector<Order> generate_orders(const std::vector<int32_t>& mid_path, std::mt19937& gen) {
+    const int count = static_cast<int>(mid_path.size());
+    std::uniform_int_distribution<>         side_dist(0, 1);
+    std::uniform_int_distribution<>         type_dist(0, 4);
+    std::normal_distribution<double>        offset_dist(0.0, 5.0); // σ = 5 ticks
     std::uniform_int_distribution<uint64_t> qty_dist(1, 100);
 
     std::vector<Order> orders;
@@ -21,13 +48,17 @@ static std::vector<Order> generate_orders(int count, std::mt19937& gen) {
         OrderSide side = (side_dist(gen) == 0) ? OrderSide::Buy : OrderSide::Sell;
         int t = type_dist(gen);
         OrderType type;
-        if      (t <= 1) type = OrderType::Limit;   // 0,1 → 40%
-        else if (t == 2) type = OrderType::Market;  // 2   → 20%
-        else if (t == 3) type = OrderType::IoC;     // 3   → 20%
-        else             type = OrderType::FOK;     // 4   → 20%
+        if      (t <= 1) type = OrderType::Limit;  // 40%
+        else if (t == 2) type = OrderType::Market; // 20%
+        else if (t == 3) type = OrderType::IoC;    // 20%
+        else             type = OrderType::FOK;    // 20%
 
-        // Market orders have no price; all others use a limit price
-        double price = (type == OrderType::Market) ? 0.0 : price_dist(gen) / 100.0;
+        // Market orders have no price limit; all others are centred on the current mid
+        int32_t price = 0;
+        if (type != OrderType::Market) {
+            price = static_cast<int32_t>(std::round(mid_path[i] + offset_dist(gen)));
+            price = std::max(price, int32_t{1}); // guard against negative prices
+        }
         orders.emplace_back(side, type, price, qty_dist(gen));
     }
     return orders;
@@ -38,8 +69,11 @@ void run_performance_benchmark() {
     const double CANCEL_RATIO = 0.20; // roughly 1 in 5 ops will be a cancel
 
     std::mt19937 gen(42);
-    std::cout << "Pre-generating " << NUM_OPS << " orders..." << std::endl;
-    auto orders = generate_orders(NUM_OPS, gen);
+    std::cout << "Pre-generating " << NUM_OPS << " orders (random-walk mid, N(mid,σ=5) prices)...\n";
+    auto mid_path = generate_mid_path(NUM_OPS, gen);
+    auto orders   = generate_orders(mid_path, gen);
+    std::cout << "  Mid range: " << fmt_price(*std::min_element(mid_path.begin(), mid_path.end()))
+              << " – " << fmt_price(*std::max_element(mid_path.begin(), mid_path.end())) << "\n";
 
     // throughput benchmark - mix of adds and cancels
     {
@@ -140,53 +174,48 @@ static void print_result(const char* label, const ProcessOrderResult& r) {
     for (const auto& t : r.trades) {
         std::cout << "    Trade: buyer=" << t.buyer_order_id
                   << " seller=" << t.seller_order_id
-                  << " price=" << t.price
+                  << " price=" << fmt_price(t.price)
                   << " qty=" << t.quantity << "\n";
     }
 }
 
 void general_test(OrderBook& order_book) {
+    // All prices are in ticks (1 tick = $0.01).
+    // 10000 = $100.00,  10100 = $101.00,  9900 = $99.00,  10500 = $105.00
     std::cout << "=== Basic Limit/Market tests ===\n";
 
-    // Seed book: buy@100 qty10, sell@101 qty5
-    auto r1 = order_book.process_order({OrderSide::Buy,  OrderType::Limit, 100.0, 10});
-    auto r2 = order_book.process_order({OrderSide::Sell, OrderType::Limit, 101.0,  5});
-    print_result("Limit Buy  @100 qty10 (expect Resting)", r1);
-    print_result("Limit Sell @101 qty5  (expect Resting)", r2);
+    auto r1 = order_book.process_order({OrderSide::Buy,  OrderType::Limit, 10000, 10});
+    auto r2 = order_book.process_order({OrderSide::Sell, OrderType::Limit, 10100,  5});
+    print_result("Limit Buy  @$100.00 qty10 (expect Resting)", r1);
+    print_result("Limit Sell @$101.00 qty5  (expect Resting)", r2);
 
-    // Sell@99 crosses the bid@100 — should match
-    auto r3 = order_book.process_order({OrderSide::Sell, OrderType::Limit, 99.0, 15});
-    print_result("Limit Sell @99  qty15 (expect partial fill + Resting)", r3);
+    // Sell@$99 crosses the bid@$100 — should match
+    auto r3 = order_book.process_order({OrderSide::Sell, OrderType::Limit, 9900, 15});
+    print_result("Limit Sell @$99.00 qty15  (expect partial fill + Resting)", r3);
 
     // Aggressive buy sweeps remaining book
-    auto r4 = order_book.process_order({OrderSide::Buy, OrderType::Limit, 105.0, 100});
-    print_result("Limit Buy  @105 qty100 (expect trades + Resting remainder)", r4);
+    auto r4 = order_book.process_order({OrderSide::Buy, OrderType::Limit, 10500, 100});
+    print_result("Limit Buy  @$105.00 qty100 (expect trades + Resting remainder)", r4);
 
     std::cout << "\n=== IoC tests ===\n";
 
-    // Setup: sell@100 qty20
-    order_book.process_order({OrderSide::Sell, OrderType::Limit, 100.0, 20});
+    order_book.process_order({OrderSide::Sell, OrderType::Limit, 10000, 20}); // seed: sell@$100 qty20
 
-    // IoC buy below best ask — no match, entire order cancelled (not resting)
-    auto ioc1 = order_book.process_order({OrderSide::Buy, OrderType::IoC, 99.0, 10});
-    print_result("IoC Buy @99 qty10 against ask@100  (expect Killed/no trades)", ioc1);
+    auto ioc1 = order_book.process_order({OrderSide::Buy, OrderType::IoC, 9900, 10});
+    print_result("IoC Buy @$99.00 qty10 vs ask@$100 (expect Filled=0, no resting)", ioc1);
 
-    // IoC buy at ask — partial fill possible (only 20 available, want 30), remainder cancelled
-    auto ioc2 = order_book.process_order({OrderSide::Buy, OrderType::IoC, 100.0, 30});
-    print_result("IoC Buy @100 qty30 vs ask@100 qty20 (expect PartialFill, 1 trade)", ioc2);
+    auto ioc2 = order_book.process_order({OrderSide::Buy, OrderType::IoC, 10000, 30});
+    print_result("IoC Buy @$100.00 qty30 vs ask@$100 qty20 (expect PartialFill)", ioc2);
 
     std::cout << "\n=== FOK tests ===\n";
 
-    // Setup: sell@100 qty5
-    order_book.process_order({OrderSide::Sell, OrderType::Limit, 100.0, 5});
+    order_book.process_order({OrderSide::Sell, OrderType::Limit, 10000, 5}); // seed: sell@$100 qty5
 
-    // FOK buy qty20 — only 5 available, cannot fill entirely → killed
-    auto fok1 = order_book.process_order({OrderSide::Buy, OrderType::FOK, 100.0, 20});
-    print_result("FOK Buy @100 qty20 vs ask@100 qty5  (expect Killed, 0 trades)", fok1);
+    auto fok1 = order_book.process_order({OrderSide::Buy, OrderType::FOK, 10000, 20});
+    print_result("FOK Buy @$100.00 qty20 vs ask@$100 qty5  (expect Killed)", fok1);
 
-    // FOK buy qty5 — exactly 5 available → fully filled
-    auto fok2 = order_book.process_order({OrderSide::Buy, OrderType::FOK, 100.0, 5});
-    print_result("FOK Buy @100 qty5  vs ask@100 qty5  (expect Filled, 1 trade)", fok2);
+    auto fok2 = order_book.process_order({OrderSide::Buy, OrderType::FOK, 10000, 5});
+    print_result("FOK Buy @$100.00 qty5  vs ask@$100 qty5  (expect Filled)", fok2);
 
     std::cout << "\nFinal Order Book State:\n" << order_book << "\n";
 }

@@ -1,6 +1,7 @@
 #include "OrderBook.h"
 #include <algorithm>
 #include <iostream>
+#include <iomanip>
 /*
  * OrderBook implementation
  * This class manages the order book, processes incoming orders, matches them, and maintains the state of the book
@@ -204,13 +205,13 @@ bool OrderBook::cancel_order(uint64_t order_id) {
     return true;
 }
 
-double OrderBook::get_best_bid() const {
-    if (bids_.empty()) return 0.0;
+int32_t OrderBook::get_best_bid() const {
+    if (bids_.empty()) return 0;
     return bids_.begin()->first;
 }
 
-double OrderBook::get_best_ask() const {
-    if (asks_.empty()) return 0.0;
+int32_t OrderBook::get_best_ask() const {
+    if (asks_.empty()) return 0;
     return asks_.begin()->first;
 }
 
@@ -218,25 +219,32 @@ const std::vector<Trade>& OrderBook::get_trade_history() const {
     return executed_trades_;
 }
 
-//make a pretty output of the order book
-std::ostream& operator<<(std::ostream& os, const OrderBook& book) {
-    os << "Order Book State:\n";
+// Formats a tick price as "$DDD.CC (TTTT ticks)"
+static std::string fmt_tick(int32_t ticks) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "$%d.%02d (%d ticks)", ticks / 100, ticks % 100, ticks);
+    return buf;
+}
 
-    os << "Bids:\n";
-    for (const auto& [price, orders] : book.bids_) {
-        os << "Price: " << price << ", Orders: ";
-        for (const Order* order : orders) {
-            os << "[ID: " << order->order_id << ", Qu: " << order->quantity << "] ";
-        }
+std::ostream& operator<<(std::ostream& os, const OrderBook& book) {
+    os << "Order Book State (1 tick = $0.01):\n";
+
+    os << "  Asks (best first):\n";
+    // asks_ is sorted ascending — reverse-print so best ask is at the bottom (visually natural)
+    for (auto it = book.asks_.rbegin(); it != book.asks_.rend(); ++it) {
+        os << "    " << fmt_tick(it->first) << " : ";
+        for (const Order* o : it->second)
+            os << "[id=" << o->order_id << " qty=" << o->quantity << "] ";
         os << "\n";
     }
 
-    os << "Asks:\n";
-    for (const auto& [price, orders] : book.asks_) {
-        os << "Price: " << price << ", Orders: ";
-        for (const Order* order : orders) {
-            os << "[ID:" << order->order_id << ", Qu: " << order->quantity << "] ";
-        }
+    os << "  --- spread ---\n";
+
+    os << "  Bids (best first):\n";
+    for (const auto& [price, orders] : book.bids_) {
+        os << "    " << fmt_tick(price) << " : ";
+        for (const Order* o : orders)
+            os << "[id=" << o->order_id << " qty=" << o->quantity << "] ";
         os << "\n";
     }
 

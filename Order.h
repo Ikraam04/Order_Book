@@ -28,7 +28,7 @@ struct Order {
     uint64_t client_order_id;
     OrderSide side;
     OrderType type;
-    double price;
+    int32_t price; // price in ticks (1 tick = $0.01, so $100.00 = 10000)
     uint64_t quantity;
     std::chrono::high_resolution_clock::time_point timestamp;
 
@@ -36,7 +36,7 @@ struct Order {
     Order();
 
 
-    Order(OrderSide s, OrderType t, double p, uint64_t q);
+    Order(OrderSide s, OrderType t, int32_t p, uint64_t q);
 
     bool is_filled() const;
 };

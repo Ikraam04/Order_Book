@@ -42,8 +42,8 @@ public:
     //other methods
     const std::vector<Trade>& get_trade_history() const;
     bool cancel_order(uint64_t order_id);
-    double get_best_bid() const;
-    double get_best_ask() const;
+    int32_t get_best_bid() const;
+    int32_t get_best_ask() const;
     void print_order_book() const;
 
 private:
@@ -54,8 +54,9 @@ private:
     uint64_t next_order_id_ = 1; //incremental order ID generator
 
     // map to maintain sorted order of price levels
-    std::map<double, std::deque<Order*>, std::greater<double>> bids_;
-    std::map<double, std::deque<Order*>, std::less<double>> asks_;
+    // Keys are integer ticks (1 tick = $0.01).  int32_t comparison is faster than double.
+    std::map<int32_t, std::deque<Order*>, std::greater<int32_t>> bids_;
+    std::map<int32_t, std::deque<Order*>, std::less<int32_t>>    asks_;
 
     // map to quickly find orders by their ID
     std::unordered_map<uint64_t, Order*> orders_by_id_;
