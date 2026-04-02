@@ -11,7 +11,9 @@
 
 
 //constructor
-OrderBook::OrderBook() : order_pool_(2'500'000) { // Increased pool size as needed
+OrderBook::OrderBook() : order_pool_(2'500'000) {
+    executed_trades_.reserve(2'500'000);
+    trades_buf_.reserve(64); // most orders generate far fewer than 64 trades
 }
 
 // destructor
@@ -36,7 +38,7 @@ ProcessOrderResult OrderBook::process_order(Order new_order_data) {
         return result;
     }
 
-    result.trades = match_and_fill(*incoming_order);
+    result.trades = std::move(match_and_fill(*incoming_order));
 
     if (!incoming_order->is_filled() && incoming_order->type == OrderType::Limit) {
         // Unfilled limit order — add it to the book
@@ -62,7 +64,8 @@ ProcessOrderResult OrderBook::process_order(Order new_order_data) {
 }
 
 std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
-    std::vector<Trade> trades;
+    std::vector<Trade>& trades = trades_buf_;
+    trades.clear();
 
     // Buy Side
     if (incoming_order.side == OrderSide::Buy) {

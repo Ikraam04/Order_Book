@@ -51,6 +51,9 @@ private:
 
     std::vector<Trade> executed_trades_;
 
+    // reusable buffer for trades generated per process_order call — avoids a heap alloc every call
+    std::vector<Trade> trades_buf_;
+
     uint64_t next_order_id_ = 1; //incremental order ID generator
 
     // map to maintain sorted order of price levels
