@@ -99,3 +99,55 @@ max:    575900 ns
 | Max | 757,700 ns | 575,900 ns | -24.0% |
 
 ---
+
+## Optimisation 2 — Eliminate per-call heap allocations for trades (2026-04-02)
+
+### What changed
+- Added `trades_buf_` (`std::vector<Trade>`) as a member of `OrderBook`. `match_and_fill` now clears and fills this reusable buffer instead of constructing a fresh `std::vector<Trade>` on every call.
+- `process_order` moves (not copies) the result out of the temporary into `result.trades`.
+- `executed_trades_.reserve(2'500'000)` added to the constructor — pre-allocates the full trade history buffer upfront so it never reallocates mid-benchmark.
+- `trades_buf_.reserve(64)` seeds it with a small initial buffer so the first few calls don't trigger allocations.
+
+### Why it helped
+Every call to `process_order` previously caused `match_and_fill` to construct a new `std::vector<Trade>` — that's a `malloc`/`free` on every single op, even when no trades occur. At 2M+ ops/sec this adds up fast. The reusable buffer pays the allocation cost once, then just calls `clear()` (which resets the size to 0 but keeps the memory) on every subsequent call.
+
+`executed_trades_` was also triggering periodic reallocations (doubling the buffer) throughout the benchmark run, causing latency spikes. Reserving upfront flattens those out — visible in the max latency dropping from 575,900 ns to 276,600 ns.
+
+### Current structure after this change
+Same as after Optimisation 1, plus:
+- `OrderBook` owns `trades_buf_` — a reusable working buffer for trades, cleared each call
+- `executed_trades_` is pre-reserved to 2.5M entries
+
+### Results — 2026-04-02
+**Build**: Release (MSVC)
+
+#### Throughput Benchmark (add + cancel, 2.5M ops)
+```
+Orders submitted:         1999211
+FOK killed:               321731
+IoC partial fills:        322130
+Cancels (successful):     201
+Cancels (already filled): 500588
+Total operations:         2500000
+Time:                     0.23472 s
+Throughput:               10,650,970 ops/sec
+```
+
+#### Latency Benchmark (add-only, 200k ops)
+```
+mean:   119.239 ns
+p50:    100 ns
+p99:    900 ns
+p99.9:  1200 ns
+max:    276600 ns
+```
+
+#### vs Previous (after Opt 1)
+| Metric | Opt 1 | Opt 2 | Delta |
+|---|---|---|---|
+| Throughput | 9,318,132 ops/sec | 10,650,970 ops/sec | +14.3% |
+| Mean latency | 136.012 ns | 119.239 ns | -12.3% |
+| p99.9 | 1300 ns | 1200 ns | -7.7% |
+| Max | 575,900 ns | 276,600 ns | -52.0% |
+
+---
