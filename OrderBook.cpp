@@ -23,11 +23,11 @@ ProcessOrderResult OrderBook::process_order(Order new_order_data) {
 
     Order* incoming_order = order_pool_.get_order();
     incoming_order->order_id = next_order_id_++;
+    incoming_order->seq      = incoming_order->order_id; // seq == order_id: monotonically increasing, free
     incoming_order->side     = new_order_data.side;
     incoming_order->type     = new_order_data.type;
     incoming_order->price    = new_order_data.price;
     incoming_order->quantity = new_order_data.quantity;
-    incoming_order->timestamp = std::chrono::high_resolution_clock::now();
 
     // FOK: dry-run check — if we cannot fill the entire quantity right now, kill the order
     if (incoming_order->type == OrderType::FOK && !can_fill_completely(*incoming_order)) {
@@ -80,8 +80,7 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
                     incoming_order.order_id,
                     existing_sell_order->order_id,
                     it->first,
-                    trade_quantity,
-                    std::chrono::high_resolution_clock::now()
+                    trade_quantity
                 };
                 // Record the trade
                 trades.push_back(new_trade);
@@ -117,7 +116,7 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
                 Order* existing_buy_order = orders_at_price.front();
                 uint64_t trade_quantity = std::min(incoming_order.quantity, existing_buy_order->quantity);
                 // record the trade
-                Trade new_trade = {existing_buy_order->order_id, incoming_order.order_id, it->first, trade_quantity, std::chrono::high_resolution_clock::now()};
+                Trade new_trade = {existing_buy_order->order_id, incoming_order.order_id, it->first, trade_quantity};
                 trades.push_back(new_trade);
                 executed_trades_.push_back(new_trade);
 

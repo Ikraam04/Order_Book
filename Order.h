@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <chrono>
 
 /*
  * Order implementation
@@ -30,7 +29,7 @@ struct Order {
     OrderType type;
     int32_t price; // price in ticks (1 tick = $0.01, so $100.00 = 10000)
     uint64_t quantity;
-    std::chrono::high_resolution_clock::time_point timestamp;
+    uint64_t seq; // arrival sequence number — used for time priority (FIFO), cheaper than chrono
 
 
     Order();

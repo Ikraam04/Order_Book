@@ -13,7 +13,7 @@ Order::Order()
           type(OrderType::Limit),
           price(0),
           quantity(0),
-          timestamp(std::chrono::high_resolution_clock::now())
+          seq(0)
 {}
 
 // parameterized constructor
@@ -24,7 +24,7 @@ Order::Order(OrderSide s, OrderType t, int32_t p, uint64_t q)
           type(t),
           price(p),
           quantity(q),
-          timestamp(std::chrono::high_resolution_clock::now()) {
+          seq(0) {
 }
 
 // is_filled() member function

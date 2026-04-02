@@ -69,7 +69,7 @@ void run_performance_benchmark() {
     const double CANCEL_RATIO = 0.20; // roughly 1 in 5 ops will be a cancel
 
     std::mt19937 gen(42);
-    std::cout << "Pre-generating " << NUM_OPS << " orders (random-walk mid, N(mid,σ=5) prices)...\n";
+    std::cout << "Pre-generating " << NUM_OPS << " orders (random-walk mid, N(mid,std=5) prices)...\n";
     auto mid_path = generate_mid_path(NUM_OPS, gen);
     auto orders   = generate_orders(mid_path, gen);
     std::cout << "  Mid range: " << fmt_price(*std::min_element(mid_path.begin(), mid_path.end()))
