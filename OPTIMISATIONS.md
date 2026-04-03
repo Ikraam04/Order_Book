@@ -151,3 +151,56 @@ max:    276600 ns
 | Max | 575,900 ns | 276,600 ns | -52.0% |
 
 ---
+
+## Optimisation 3 — Replace std::deque with vector + head index at each price level (2026-04-03)
+
+### What changed
+- Introduced a `PriceLevel` struct to replace `std::deque<Order*>` at each price level in `bids_` and `asks_`.
+- `PriceLevel` wraps a `std::vector<Order*>` and a `size_t head` index. `pop_front()` just increments `head` — no memory movement, no deallocation.
+- Exposes the same interface (`front()`, `pop_front()`, `push_back()`, `empty()`, iterators, `erase()`) so the matching loop and cancel logic needed no changes.
+- Removed `#include <deque>`.
+
+### Why it helped
+`std::deque` internally manages a set of fixed-size heap-allocated blocks. Even though `pop_front()` is O(1), it involves the deque's block bookkeeping and the Order* pointers aren't in one contiguous chunk — they're scattered across blocks. Every `front()` call during matching follows an extra level of indirection.
+
+`PriceLevel` stores all Order* pointers in a single contiguous vector. `pop_front` is a single integer increment. The CPU's prefetcher can stride through the active entries efficiently. When the level fully empties, the vector is cleared and the map entry is erased as before, so there's no unbounded memory growth.
+
+### Current structure after this change
+Same as after Optimisation 2, except:
+- `bids_` and `asks_` are `std::map<int32_t, PriceLevel>` instead of `std::map<int32_t, std::deque<Order*>>`
+- Each `PriceLevel` is a vector + head index — contiguous, no block indirection
+
+### Results — 2026-04-03
+**Build**: Release (MSVC)
+
+#### Throughput Benchmark (add + cancel, 2.5M ops)
+```
+Orders submitted:         1999211
+FOK killed:               321731
+IoC partial fills:        322130
+Cancels (successful):     201
+Cancels (already filled): 500588
+Total operations:         2500000
+Time:                     0.196022 s
+Throughput:               12,753,696 ops/sec
+```
+
+#### Latency Benchmark (add-only, 200k ops)
+```
+mean:   101.344 ns
+p50:    100 ns
+p99:    800 ns
+p99.9:  1100 ns
+max:    119000 ns
+```
+
+#### vs Previous (after Opt 2)
+| Metric | Opt 2 | Opt 3 | Delta |
+|---|---|---|---|
+| Throughput | 10,650,970 ops/sec | 12,753,696 ops/sec | +19.7% |
+| Mean latency | 119.239 ns | 101.344 ns | -15.0% |
+| p99 | 900 ns | 800 ns | -11.1% |
+| p99.9 | 1200 ns | 1100 ns | -8.3% |
+| Max | 276,600 ns | 119,000 ns | -57.0% |
+
+---

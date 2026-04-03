@@ -13,7 +13,7 @@
 //constructor
 OrderBook::OrderBook() : order_pool_(2'500'000) {
     executed_trades_.reserve(2'500'000);
-    trades_buf_.reserve(64); // most orders generate far fewer than 64 trades
+    trades_buf_.reserve(64); // most orders generate far fewer
 }
 
 // destructor
@@ -122,7 +122,6 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
                 Trade new_trade = {existing_buy_order->order_id, incoming_order.order_id, it->first, trade_quantity};
                 trades.push_back(new_trade);
                 executed_trades_.push_back(new_trade);
-
                 incoming_order.quantity -= trade_quantity;
                 existing_buy_order->quantity -= trade_quantity;
                 // if the existing order is fully filled, remove it from the book
@@ -182,7 +181,6 @@ bool OrderBook::cancel_order(uint64_t order_id) {
 
     if (order_to_cancel->side == OrderSide::Buy) {
         auto& orders_at_price = bids_.at(order_to_cancel->price);
-        // this is not the most efficient way, but it works for now
         auto order_it = std::find(orders_at_price.begin(), orders_at_price.end(), order_to_cancel);
         if (order_it != orders_at_price.end()) {
             orders_at_price.erase(order_it);
@@ -190,7 +188,7 @@ bool OrderBook::cancel_order(uint64_t order_id) {
                 bids_.erase(order_to_cancel->price);
             }
         }
-    } else { // Sell Side
+    } else {
         auto& orders_at_price = asks_.at(order_to_cancel->price);
         auto order_it = std::find(orders_at_price.begin(), orders_at_price.end(), order_to_cancel);
         if (order_it != orders_at_price.end()) {
@@ -200,7 +198,6 @@ bool OrderBook::cancel_order(uint64_t order_id) {
             }
         }
     }
-
 
     // return the order to the pool
     order_pool_.return_order(order_to_cancel);
@@ -252,4 +249,3 @@ std::ostream& operator<<(std::ostream& os, const OrderBook& book) {
 
     return os;
 }
-

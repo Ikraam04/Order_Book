@@ -2,9 +2,8 @@
 
 #include "Order.h"
 #include "Trade.h"
-#include "OrderPool.h" // Include the pool
-#include <map>         // Using the original std::map
-#include <deque>
+#include "OrderPool.h"
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -15,6 +14,28 @@
  * The order book maintains bids and asks in sorted maps for efficient matching
  */
 
+
+// replaces std::deque<Order*> at each price level
+// pop_front is just head++ — no memory movement, no block pointer chasing
+// all Order* pointers sit in one contiguous vector
+struct PriceLevel {
+    std::vector<Order*> orders;
+    size_t head = 0;
+
+    bool    empty()    const { return head >= orders.size(); }
+    Order*  front()    const { return orders[head]; }
+    void    pop_front()      { head++; }
+    void    push_back(Order* o) { orders.push_back(o); }
+    void    clear()          { orders.clear(); head = 0; }
+
+    // iterators that start from the first active slot so range-for and std::find skip consumed entries
+    std::vector<Order*>::iterator       begin()       { return orders.begin() + head; }
+    std::vector<Order*>::iterator       end()         { return orders.end(); }
+    std::vector<Order*>::const_iterator begin() const { return orders.begin() + head; }
+    std::vector<Order*>::const_iterator end()   const { return orders.end(); }
+
+    void erase(std::vector<Order*>::iterator it) { orders.erase(it); }
+};
 
 // Describes what ultimately happened to the incoming order
 enum class OrderStatus : uint8_t {
@@ -58,8 +79,8 @@ private:
 
     // map to maintain sorted order of price levels
     // Keys are integer ticks (1 tick = $0.01).  int32_t comparison is faster than double.
-    std::map<int32_t, std::deque<Order*>, std::greater<int32_t>> bids_;
-    std::map<int32_t, std::deque<Order*>, std::less<int32_t>>    asks_;
+    std::map<int32_t, PriceLevel, std::greater<int32_t>> bids_;
+    std::map<int32_t, PriceLevel, std::less<int32_t>>    asks_;
 
     // map to quickly find orders by their ID
     std::unordered_map<uint64_t, Order*> orders_by_id_;
