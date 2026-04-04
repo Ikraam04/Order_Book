@@ -259,3 +259,57 @@ max:    64700 ns
 | Max | 119,000 ns | 64,700 ns | -45.7% |
 
 ---
+
+## Optimisation 5 — Eliminate result.trades vector copy via std::span (2026-04-03)
+
+### What changed
+- `ProcessOrderResult::trades` changed from `std::vector<Trade>` to `std::span<const Trade>`.
+- `match_and_fill` changed from returning `std::vector<Trade>` by value to `void` — it fills `trades_buf_` directly and returns nothing.
+- `process_order` now sets `result.trades = trades_buf_` which constructs a span (just a pointer + size, no allocation).
+- Added `#include <span>`.
+
+### Why it helped
+Previously, every `process_order` call did three things with trades: fill `trades_buf_`, copy it into a temporary return value, then move that into `result.trades`. Even with the move, the copy from `trades_buf_` into the temporary was a full vector copy — allocating new memory and copying all Trade objects.
+
+A `std::span` is just a pointer and a length — two words. Setting `result.trades = trades_buf_` is effectively free. No allocation, no copying. The tradeoff is that the span is only valid until the next `process_order` call, since `trades_buf_` gets cleared at the start of each call. For sequential use (which covers both the benchmark and any normal trading loop) this is fine.
+
+The max latency improvement (-63.7%) is the most striking result — large matching operations that generated many trades were paying the biggest copy cost, and those are now completely free.
+
+### Current structure after this change
+Same as after Optimisation 4, except:
+- `ProcessOrderResult::trades` is `std::span<const Trade>` — a zero-copy view into `trades_buf_`
+- `match_and_fill` is `void`, writes directly into `trades_buf_`
+
+### Results — 2026-04-03
+**Build**: Release (MSVC)
+
+#### Throughput Benchmark (add + cancel, 2.5M ops)
+```
+Orders submitted:         1999211
+FOK killed:               321731
+IoC partial fills:        322130
+Cancels (successful):     201
+Cancels (already filled): 500588
+Total operations:         2500000
+Time:                     0.163304 s
+Throughput:               15,308,843 ops/sec
+```
+
+#### Latency Benchmark (add-only, 200k ops)
+```
+mean:   75.597 ns
+p50:    100 ns
+p99:    800 ns
+p99.9:  900 ns
+max:    23500 ns
+```
+
+#### vs Previous (after Opt 4)
+| Metric | Opt 4 | Opt 5 | Delta |
+|---|---|---|---|
+| Throughput | 12,991,892 ops/sec | 15,308,843 ops/sec | +17.8% |
+| Mean latency | 89.442 ns | 75.597 ns | -15.5% |
+| p99.9 | 1000 ns | 900 ns | -10.0% |
+| Max | 64,700 ns | 23,500 ns | -63.7% |
+
+---

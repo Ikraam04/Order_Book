@@ -40,7 +40,8 @@ ProcessOrderResult OrderBook::process_order(Order new_order_data) {
         return result;
     }
 
-    result.trades = std::move(match_and_fill(*incoming_order));
+    match_and_fill(*incoming_order);
+    result.trades = trades_buf_; // span — zero-copy view into the buffer
 
     if (!incoming_order->is_filled() && incoming_order->type == OrderType::Limit) {
         // Unfilled limit order — add it to the book
@@ -65,7 +66,7 @@ ProcessOrderResult OrderBook::process_order(Order new_order_data) {
     return result;
 }
 
-std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
+void OrderBook::match_and_fill(Order& incoming_order) {
     std::vector<Trade>& trades = trades_buf_;
     trades.clear();
 
@@ -141,7 +142,6 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
             }
         }
     }
-    return trades;
 }
 
 bool OrderBook::can_fill_completely(const Order& order) const {

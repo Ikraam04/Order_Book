@@ -4,6 +4,7 @@
 #include "Trade.h"
 #include "OrderPool.h"
 #include <map>
+#include <span>
 #include <vector>
 
 /*
@@ -45,9 +46,9 @@ enum class OrderStatus : uint8_t {
 };
 
 struct ProcessOrderResult {
-    std::vector<Trade> trades;
-    uint64_t           new_order_id = 0; // non-zero only when the order is resting in the book
-    OrderStatus        status       = OrderStatus::Filled;
+    std::span<const Trade> trades; // view into OrderBook::trades_buf_ — valid until next process_order call
+    uint64_t               new_order_id = 0; // non-zero only when the order is resting in the book
+    OrderStatus            status       = OrderStatus::Filled;
 };
 
 
@@ -90,7 +91,7 @@ private:
 
     friend std::ostream& operator<<(std::ostream& os, const OrderBook& book);
 
-    std::vector<Trade> match_and_fill(Order& new_order);
+    void match_and_fill(Order& new_order); // fills trades_buf_ directly, no return copy
 
     // Dry-run for FOK: checks whether the full quantity of `order` can be filled
     // at its limit price without modifying the book.
