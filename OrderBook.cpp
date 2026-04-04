@@ -13,7 +13,9 @@
 //constructor
 OrderBook::OrderBook() : order_pool_(2'500'000) {
     executed_trades_.reserve(2'500'000);
-    trades_buf_.reserve(64); // most orders generate far fewer
+    trades_buf_.reserve(64);
+    // +1 because order IDs start at 1, so index 0 is unused
+    order_lookup_.assign(2'500'001, nullptr);
 }
 
 // destructor
@@ -47,7 +49,7 @@ ProcessOrderResult OrderBook::process_order(Order new_order_data) {
         } else {
             asks_[incoming_order->price].push_back(incoming_order);
         }
-        orders_by_id_[incoming_order->order_id] = incoming_order;
+        order_lookup_[incoming_order->order_id] = incoming_order;
         result.new_order_id = incoming_order->order_id;
         result.status = result.trades.empty() ? OrderStatus::Resting : OrderStatus::Resting;
     } else {
@@ -95,7 +97,7 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
                 // If the existing order is fully filled, remove it from the book
                 if (existing_sell_order->is_filled()) {
                     orders_at_price.pop_front();
-                    orders_by_id_.erase(existing_sell_order->order_id);
+                    order_lookup_[existing_sell_order->order_id] = nullptr;
                     order_pool_.return_order(existing_sell_order);
                 }
             }
@@ -127,7 +129,7 @@ std::vector<Trade> OrderBook::match_and_fill(Order& incoming_order) {
                 // if the existing order is fully filled, remove it from the book
                 if (existing_buy_order->is_filled()) {
                     orders_at_price.pop_front();
-                    orders_by_id_.erase(existing_buy_order->order_id);
+                    order_lookup_[existing_buy_order->order_id] = nullptr;
                     order_pool_.return_order(existing_buy_order);
                 }
             }
@@ -170,14 +172,13 @@ bool OrderBook::can_fill_completely(const Order& order) const {
 }
 
 bool OrderBook::cancel_order(uint64_t order_id) {
-    // Look up the order by id
-    auto it = orders_by_id_.find(order_id);
-    if (it == orders_by_id_.end()) {
+    // direct index lookup — O(1), no hashing
+    if (order_id >= order_lookup_.size() || order_lookup_[order_id] == nullptr) {
         return false;
     }
 
-    Order* order_to_cancel = it->second;
-    orders_by_id_.erase(it);
+    Order* order_to_cancel = order_lookup_[order_id];
+    order_lookup_[order_id] = nullptr;
 
     if (order_to_cancel->side == OrderSide::Buy) {
         auto& orders_at_price = bids_.at(order_to_cancel->price);

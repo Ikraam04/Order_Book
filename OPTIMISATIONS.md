@@ -204,3 +204,58 @@ max:    119000 ns
 | Max | 276,600 ns | 119,000 ns | -57.0% |
 
 ---
+
+## Optimisation 4 — Replace unordered_map with flat vector for order lookup (2026-04-03)
+
+### What changed
+- Removed `std::unordered_map<uint64_t, Order*> orders_by_id_`.
+- Replaced with `std::vector<Order*> order_lookup_` sized to 2,500,001 (matching the pool), all initialised to `nullptr`.
+- Lookup is now `order_lookup_[order_id]` — a direct array index.
+- On insert: `order_lookup_[id] = pointer`. On fill/cancel: `order_lookup_[id] = nullptr`.
+- Removed `#include <unordered_map>`.
+
+### Why it helped
+`std::unordered_map` uses separate chaining — each bucket is a linked list of heap-allocated nodes. Every `find` or `erase` involves computing a hash, indexing into the bucket array, then following a pointer to a node somewhere in heap memory. That's at minimum one cache miss per lookup.
+
+Since order IDs are sequential integers starting at 1, a direct array index is just a pointer + offset — O(1) with no hashing, no chaining, and the lookup lands in a predictable memory location. The tradeoff is ~20MB of memory for the vector (2.5M pointers × 8 bytes).
+
+The throughput gain is smaller than previous optimisations because this path is only hit on matched orders and cancels, not every operation. The latency improvement is more visible — the hash map was causing occasional expensive lookups that showed up in the tail.
+
+### Current structure after this change
+Same as after Optimisation 3, except:
+- Order lookup is a flat `std::vector<Order*>` indexed directly by `order_id`
+- No hash map, no heap-allocated nodes
+
+### Results — 2026-04-03
+**Build**: Release (MSVC)
+
+#### Throughput Benchmark (add + cancel, 2.5M ops)
+```
+Orders submitted:         1999211
+FOK killed:               321731
+IoC partial fills:        322130
+Cancels (successful):     201
+Cancels (already filled): 500588
+Total operations:         2500000
+Time:                     0.192428 s
+Throughput:               12,991,892 ops/sec
+```
+
+#### Latency Benchmark (add-only, 200k ops)
+```
+mean:   89.442 ns
+p50:    100 ns
+p99:    800 ns
+p99.9:  1000 ns
+max:    64700 ns
+```
+
+#### vs Previous (after Opt 3)
+| Metric | Opt 3 | Opt 4 | Delta |
+|---|---|---|---|
+| Throughput | 12,753,696 ops/sec | 12,991,892 ops/sec | +1.9% |
+| Mean latency | 101.344 ns | 89.442 ns | -11.7% |
+| p99.9 | 1100 ns | 1000 ns | -9.1% |
+| Max | 119,000 ns | 64,700 ns | -45.7% |
+
+---

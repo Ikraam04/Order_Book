@@ -4,7 +4,6 @@
 #include "Trade.h"
 #include "OrderPool.h"
 #include <map>
-#include <unordered_map>
 #include <vector>
 
 /*
@@ -82,8 +81,9 @@ private:
     std::map<int32_t, PriceLevel, std::greater<int32_t>> bids_;
     std::map<int32_t, PriceLevel, std::less<int32_t>>    asks_;
 
-    // map to quickly find orders by their ID
-    std::unordered_map<uint64_t, Order*> orders_by_id_;
+    // flat array indexed by order_id for O(1) lookup with no hashing or pointer chasing
+    // order IDs are sequential integers so this is just a direct index
+    std::vector<Order*> order_lookup_;
 
     // the order pool for memory management
     OrderPool order_pool_;
