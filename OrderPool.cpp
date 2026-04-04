@@ -1,19 +1,16 @@
-
 #include "OrderPool.h"
 #include <stdexcept>
-/*
- * OrderPool implementation
- * This class manages a pool of pre-allocated Order objects to minimize dynamic memory allocations.
- * It provides methods to get an available Order object and to return it back to the pool.
- * When the pool is exhausted, it throws an exception.
- */
 
+// OrderPool.cpp - implementation of the memory pool
+// see OrderPool.h for the explanation of why this exists
 
 OrderPool::OrderPool(size_t size) {
-    // pre-allocate the pool of Order objects
+    // allocate all the order slots up front in one big vector
+    // this means they're all contiguous in memory which is good for cache
     pool_.resize(size);
 
-    // Create the free list, initially containing pointers to every object in the pool
+    // fill the free list with pointers to every slot
+    // we treat it as a stack - push/pop from the back which is O(1)
     free_list_.reserve(size);
     for (auto& order : pool_) {
         free_list_.push_back(&order);
@@ -22,17 +19,16 @@ OrderPool::OrderPool(size_t size) {
 
 Order* OrderPool::get_order() {
     if (free_list_.empty()) {
-        // when no pool objects are available, throw an exception
         throw std::runtime_error("Order pool exhausted!");
     }
 
-    // give the caller a pointer to an available Order object
+    // pop from the back of the stack - O(1), no searching
     Order* order = free_list_.back();
     free_list_.pop_back();
     return order;
 }
 
 void OrderPool::return_order(Order* order) {
-    // Return the pointer to the free list to be used again
+    // push back onto the stack so it can be reused next time
     free_list_.push_back(order);
 }

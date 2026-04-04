@@ -1,39 +1,29 @@
-//
-// Created by taco on 06/09/2025.
-//
-
-
 #pragma once
+
+// OrderPool.h - memory pool for Order objects
+// instead of calling new/delete every time an order comes in (which is slow),
+// we pre-allocate a big block of Order objects at startup and hand them out as needed.
+// OrderBook grabs one with get_order() and gives it back with return_order() when it's done.
+// this keeps allocation cost out of the hot path completely.
 
 #include "Order.h"
 #include <vector>
 #include <memory>
 
-/*
- * OrderPool implementation
- * This class manages a pool of pre-allocated Order objects to minimize dynamic memory allocations.
- * It provides methods to get an available Order object and to return it back to the pool.
- * When the pool is exhausted, it throws an exception.
- */
+// pre-allocates a big chunk of Order objects up front so we never have to call
+// malloc/free during the actual matching - just grab one from the pool and give it back when done
 
 class OrderPool {
 public:
-    // constructor pre-allocates a fixed number of Order objects
     explicit OrderPool(size_t size);
 
-    // returns a pointer to an available Order object from the pool
-    // throws std::runtime_error if the pool is exhausted
+    // grab an order from the pool - throws if you somehow run out
     Order* get_order();
 
-    // returns an Order object back to the pool for reuse
+    // give an order back to the pool so it can be reused
     void return_order(Order* order);
 
 private:
-    // this is the actual storage for the pool of Order objects
-    std::vector<Order> pool_;
-
-    // this is a stack of pointers to available Order objects in the pool
-    std::vector<Order*> free_list_;
+    std::vector<Order> pool_;       // the actual storage - all orders live here
+    std::vector<Order*> free_list_; // stack of pointers to the available slots
 };
-
-

@@ -1,12 +1,9 @@
 #include "Order.h"
 
-/*
- * Order implementation
- * This class represents an order in the order book with its attributes and basic functionality
- * It includes constructors and a method to check if the order is filled
- */
+// Order.cpp - just the constructors and is_filled() for the Order struct
+// nothing fancy here, Order.h has all the actual field definitions
 
-// default constructor
+// default constructor - everything zeroed out
 Order::Order()
         : order_id(0),
           side(OrderSide::Buy),
@@ -16,7 +13,7 @@ Order::Order()
           seq(0)
 {}
 
-// parameterized constructor
+// the one you actually use when submitting an order
 Order::Order(OrderSide s, OrderType t, int32_t p, uint64_t q)
         : order_id(0),
           client_order_id(0),
@@ -27,7 +24,7 @@ Order::Order(OrderSide s, OrderType t, int32_t p, uint64_t q)
           seq(0) {
 }
 
-// is_filled() member function
+// order is done when quantity hits 0
 bool Order::is_filled() const {
     return quantity == 0;
 }

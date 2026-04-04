@@ -1,5 +1,11 @@
 #pragma once
 
+// OrderBook.h - the main class that runs everything
+// this is where the actual order book lives - it holds the bid/ask price levels,
+// matches incoming orders against resting ones, handles cancels, and tracks trade history.
+// the core flow is: process_order() -> match_and_fill() -> results come back via ProcessOrderResult.
+// a lot of the data structures here have been optimised pretty heavily - see OPTIMISATIONS.md for the full story.
+
 #include "Order.h"
 #include "Trade.h"
 #include "OrderPool.h"
@@ -7,28 +13,21 @@
 #include <span>
 #include <vector>
 
-/*
- * OrderBook implementation
- * This class manages the order book, processes incoming orders, matches them, and maintains the state of the book
- * It uses an OrderPool to efficiently manage memory for Order objects
- * The order book maintains bids and asks in sorted maps for efficient matching
- */
-
-
-// replaces std::deque<Order*> at each price level
-// pop_front is just head++ — no memory movement, no block pointer chasing
-// all Order* pointers sit in one contiguous vector
+// PriceLevel replaces std::deque<Order*> at each price level in the book
+// the key thing here is pop_front() - with a deque that involves block pointer chasing
+// with this it's literally just head++ which is basically free
+// all the order pointers sit in one contiguous vector so the cpu prefetcher is happy
 struct PriceLevel {
     std::vector<Order*> orders;
-    size_t head = 0;
+    size_t head = 0; // index of the first live order - everything before this has been matched
 
-    bool    empty()    const { return head >= orders.size(); }
-    Order*  front()    const { return orders[head]; }
-    void    pop_front()      { head++; }
-    void    push_back(Order* o) { orders.push_back(o); }
-    void    clear()          { orders.clear(); head = 0; }
+    bool   empty()    const { return head >= orders.size(); }
+    Order* front()    const { return orders[head]; }
+    void   pop_front()      { head++; } // just move the head forward, no memory freed
+    void   push_back(Order* o) { orders.push_back(o); }
+    void   clear()          { orders.clear(); head = 0; }
 
-    // iterators that start from the first active slot so range-for and std::find skip consumed entries
+    // iterators start from head so range-for and std::find only see live orders
     std::vector<Order*>::iterator       begin()       { return orders.begin() + head; }
     std::vector<Order*>::iterator       end()         { return orders.end(); }
     std::vector<Order*>::const_iterator begin() const { return orders.begin() + head; }
@@ -37,18 +36,20 @@ struct PriceLevel {
     void erase(std::vector<Order*>::iterator it) { orders.erase(it); }
 };
 
-// Describes what ultimately happened to the incoming order
+// what happened to an order after process_order runs
 enum class OrderStatus : uint8_t {
-    Resting,     // unfilled (or partially filled) limit order added to the book
-    Filled,      // fully matched immediately (any order type)
-    PartialFill, // IoC: partially matched; unfilled remainder was cancelled
-    Killed,      // FOK: could not be completely filled; entire order cancelled, no trades executed
+    Resting,     // limit order sitting in the book (maybe partially filled)
+    Filled,      // completely matched
+    PartialFill, // IoC: matched what it could, rest was cancelled
+    Killed,      // FOK: couldn't fill the whole thing so the whole thing was cancelled
 };
 
 struct ProcessOrderResult {
-    std::span<const Trade> trades; // view into OrderBook::trades_buf_ — valid until next process_order call
-    uint64_t               new_order_id = 0; // non-zero only when the order is resting in the book
-    OrderStatus            status       = OrderStatus::Filled;
+    // span instead of vector - this is just a pointer+size pointing at the orderbook's internal
+    // trades buffer. no copy, no allocation. just don't use it after the next process_order call
+    std::span<const Trade> trades;
+    uint64_t new_order_id = 0; // only set if the order is now resting in the book
+    OrderStatus status = OrderStatus::Filled;
 };
 
 
@@ -57,10 +58,8 @@ public:
     OrderBook();
     ~OrderBook();
 
-    // main method to process incoming orders
     ProcessOrderResult process_order(Order new_order);
 
-    //other methods
     const std::vector<Trade>& get_trade_history() const;
     bool cancel_order(uint64_t order_id);
     int32_t get_best_bid() const;
@@ -68,32 +67,30 @@ public:
     void print_order_book() const;
 
 private:
-    // internal state
+    std::vector<Trade> executed_trades_; // full history of every trade - pre-reserved so it never reallocates
 
-    std::vector<Trade> executed_trades_;
-
-    // reusable buffer for trades generated per process_order call — avoids a heap alloc every call
+    // reusable buffer - match_and_fill writes trades here instead of allocating a new vector every call
+    // the result span points into this, so the caller sees the trades without any copying
     std::vector<Trade> trades_buf_;
 
-    uint64_t next_order_id_ = 1; //incremental order ID generator
+    uint64_t next_order_id_ = 1;
 
-    // map to maintain sorted order of price levels
-    // Keys are integer ticks (1 tick = $0.01).  int32_t comparison is faster than double.
+    // bids sorted high-to-low (best bid first), asks sorted low-to-high (best ask first)
+    // using int32_t ticks as the key - way faster than comparing doubles
     std::map<int32_t, PriceLevel, std::greater<int32_t>> bids_;
     std::map<int32_t, PriceLevel, std::less<int32_t>>    asks_;
 
-    // flat array indexed by order_id for O(1) lookup with no hashing or pointer chasing
-    // order IDs are sequential integers so this is just a direct index
+    // flat array indexed by order_id for O(1) cancel lookup
+    // order IDs are just sequential ints starting at 1 so we can use them directly as indices
+    // way faster than unordered_map which has to hash + chase pointers through heap nodes
     std::vector<Order*> order_lookup_;
 
-    // the order pool for memory management
     OrderPool order_pool_;
 
     friend std::ostream& operator<<(std::ostream& os, const OrderBook& book);
 
-    void match_and_fill(Order& new_order); // fills trades_buf_ directly, no return copy
+    void match_and_fill(Order& new_order); // writes into trades_buf_, no return value
 
-    // Dry-run for FOK: checks whether the full quantity of `order` can be filled
-    // at its limit price without modifying the book.
+    // used for FOK only - dry run to check if we can fill the whole order before touching the book
     bool can_fill_completely(const Order& order) const;
 };
